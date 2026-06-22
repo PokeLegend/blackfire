@@ -90,6 +90,7 @@
             width: 100%;
             height: 100%;
             border: none;
+            /* allow autoplay */;
         }
 
         /* ---------- INTRO SPLASH ---------- */
@@ -987,7 +988,7 @@
             'use strict';
 
             // ======================================================================
-            // 0. YOUTUBE PLAYER API — FORCED AUTOPLAY (start muted, unmute on user gesture)
+            // 0. YOUTUBE PLAYER — DUAL‑LAYER AUTOPLAY (API + fallback iframe)
             // ======================================================================
             let player = null;
             let playerReady = false;
@@ -995,6 +996,11 @@
             let targetVolume = 20;
             let fadeInterval = null;
             let isFading = false;
+            let fallbackIframe = null;
+            let apiFallbackTimer = null;
+
+            const container = document.getElementById('youtube-container');
+            const playerDiv = document.getElementById('youtube-player');
 
             function setPlayerVolume(vol) {
                 if (!player || !playerReady) return;
@@ -1012,7 +1018,6 @@
                 if (fill) {
                     fill.style.width = Math.min(vol, 100) + '%';
                 }
-                // label stays simple
             }
 
             function fadeVolume(target, duration) {
@@ -1053,16 +1058,17 @@
                     isFading = false;
                 }
                 targetVolume = 10;
-                setPlayerVolume(10);
+                if (player && playerReady) setPlayerVolume(10);
+                // fallback: we can't control volume, so do nothing
             }
 
-            function fadeOutMusic() {
-                if (currentVolume === 0) return;
-                fadeVolume(0, 2500);
+            function fadeOutMusic(duration = 2500) {
+                if (currentVolume === 0 || !player || !playerReady) return;
+                fadeVolume(0, duration);
             }
 
             function fadeInMusic() {
-                if (currentVolume === 20) return;
+                if (currentVolume === 20 || !player || !playerReady) return;
                 fadeVolume(20, 2000);
             }
 
@@ -1077,21 +1083,45 @@
                         isFading = false;
                     }
                     targetVolume = vol;
-                    setPlayerVolume(vol);
+                    if (player && playerReady) setPlayerVolume(vol);
                 },
                 isFading: () => isFading
             };
 
-            // Load YouTube API
+            // ---- Fallback iframe ----
+            function createFallbackIframe() {
+                if (fallbackIframe) return;
+                fallbackIframe = document.createElement('iframe');
+                fallbackIframe.src =
+                    'https://www.youtube.com/embed/UIam8zl4af8?autoplay=1&mute=1&loop=1&playlist=UIam8zl4af8&controls=0&disablekb=1&modestbranding=1&iv_load_policy=3&playsinline=1';
+                fallbackIframe.allow = 'autoplay; encrypted-media';
+                fallbackIframe.style.width = '100%';
+                fallbackIframe.style.height = '100%';
+                fallbackIframe.style.border = 'none';
+                container.innerHTML = '';
+                container.appendChild(fallbackIframe);
+                console.log('🎵 Fallback iframe injected (muted autoplay).');
+                // indicate ready (we don't have volume control)
+                playerReady = true; // fake ready for volume indicator
+                document.getElementById('music-indicator').classList.add('active');
+                updateVolumeIndicator(20);
+            }
+
+            // ---- API attempt ----
             function loadYouTubeAPI() {
                 if (document.getElementById('youtube-api')) return;
                 const tag = document.createElement('script');
                 tag.id = 'youtube-api';
                 tag.src = 'https://www.youtube.com/iframe_api';
+                tag.async = true;
+                tag.defer = true;
                 document.head.appendChild(tag);
             }
 
+            // This will be called by the API if it loads
             window.onYouTubeIframeAPIReady = function() {
+                if (fallbackIframe) return; // already using fallback
+                clearTimeout(apiFallbackTimer);
                 player = new YT.Player('youtube-player', {
                     height: '34',
                     width: '60',
@@ -1106,20 +1136,23 @@
                         modestbranding: 1,
                         iv_load_policy: 3,
                         disablekb: 1,
-                        mute: 1          // Start muted to allow autoplay
+                        mute: 1 // start muted for autoplay
                     },
                     events: {
                         onReady: function(event) {
                             playerReady = true;
-                            // Set volume (but still muted until user gesture)
                             event.target.setVolume(20);
                             currentVolume = 20;
                             targetVolume = 20;
                             updateVolumeIndicator(20);
                             document.getElementById('music-indicator').classList.add('active');
-                            console.log('🎵 YouTube player ready (muted, autoplay forced)');
-                            // Attempt to play (muted)
+                            // add allow attribute to the iframe created by API
+                            const iframe = container.querySelector('iframe');
+                            if (iframe) {
+                                iframe.allow = 'autoplay; encrypted-media';
+                            }
                             event.target.playVideo();
+                            console.log('🎵 YouTube API player ready (muted).');
                         },
                         onStateChange: function(event) {
                             if (event.data === YT.PlayerState.ENDED) {
@@ -1127,17 +1160,40 @@
                             }
                         },
                         onError: function(event) {
-                            console.warn('YouTube error:', event.data);
+                            console.warn('YouTube API error:', event.data);
+                            // If error, fallback to iframe
+                            if (!fallbackIframe) {
+                                createFallbackIframe();
+                            }
                         }
                     }
                 });
             };
 
-            loadYouTubeAPI();
+            // If API doesn't load within 3 seconds, use fallback
+            function startAPITimer() {
+                apiFallbackTimer = setTimeout(() => {
+                    if (!playerReady && !fallbackIframe) {
+                        console.warn('YouTube API timed out, using fallback iframe.');
+                        createFallbackIframe();
+                    }
+                }, 3000);
+            }
 
-            // Unmute and ensure play on first user interaction (Enter button)
+            // Init: load API and start timer
+            loadYouTubeAPI();
+            startAPITimer();
+
+            // ---- Unmute on user interaction ----
             function ensureAudioPlayback() {
-                if (!player || !playerReady) return;
+                if (fallbackIframe) {
+                    // fallback iframe is already playing muted, we can't unmute it directly
+                    console.log('🎵 Fallback iframe is playing muted (cannot unmute).');
+                    return;
+                }
+                if (!player || !playerReady) {
+                    return;
+                }
                 try {
                     player.unMute();
                     player.setVolume(20);
@@ -1452,13 +1508,15 @@
             }
 
             // ======================================================================
-            // 6. NARRATIVE ENGINE
+            // 6. NARRATIVE ENGINE with auto-continue & slow music fade
             // ======================================================================
             let currentChapterIndex = 0;
             let narrationComplete = false;
+            let ttsEnded = false;
             let typeInterval = null;
             let activeOverlay = null;
             let overlayReturning = false;
+            let autoContinueTimer = null;
 
             function getOverlayForChapter(index) {
                 const chapter = CHAPTERS[index];
@@ -1478,9 +1536,7 @@
                 }
                 narratorDot.classList.add('paused');
                 waveform.classList.add('paused');
-                if (window.__music && window.__music.fadeOut) {
-                    window.__music.fadeOut();
-                }
+                // we do NOT fade out music here; we fade out slowly on TTS end
             }
 
             let narratorUtterance = null;
@@ -1495,6 +1551,27 @@
                 } else {
                     dot.classList.add('paused');
                     wave.classList.add('paused');
+                }
+            }
+
+            function startAutoContinue() {
+                // Called when both typing and TTS are done.
+                if (autoContinueTimer) clearTimeout(autoContinueTimer);
+                // Show the continue button (optional) but we will auto-continue after 5s
+                btnContinue.classList.add('visible');
+                autoContinueTimer = setTimeout(() => {
+                    autoContinueTimer = null;
+                    // Only continue if we are still in the same chapter and not already continuing
+                    if (narrationComplete && ttsEnded) {
+                        nextChapter();
+                    }
+                }, 5000);
+            }
+
+            function cancelAutoContinue() {
+                if (autoContinueTimer) {
+                    clearTimeout(autoContinueTimer);
+                    autoContinueTimer = null;
                 }
             }
 
@@ -1519,25 +1596,37 @@
                     );
                     if (preferred) utterance.voice = preferred;
 
+                    ttsEnded = false; // reset
+
                     utterance.onstart = () => {
                         narratorDot.classList.remove('paused');
                         waveform.classList.remove('paused');
                         if (window.__music && window.__music.duck) {
-                            window.__music.duck();
+                            window.__music.duck(); // volume to 10%
                         }
                     };
                     utterance.onend = () => {
                         narratorDot.classList.add('paused');
                         waveform.classList.add('paused');
+                        ttsEnded = true;
+                        // Start slow fade out over 8 seconds
                         if (window.__music && window.__music.fadeOut) {
-                            setTimeout(() => window.__music.fadeOut(), 300);
+                            window.__music.fadeOut(8000);
+                        }
+                        // If narration is already complete, trigger auto-continue
+                        if (narrationComplete) {
+                            startAutoContinue();
                         }
                     };
                     utterance.onerror = () => {
                         narratorDot.classList.add('paused');
                         waveform.classList.add('paused');
+                        ttsEnded = true; // treat as ended
                         if (window.__music && window.__music.fadeOut) {
-                            window.__music.fadeOut();
+                            window.__music.fadeOut(8000);
+                        }
+                        if (narrationComplete) {
+                            startAutoContinue();
                         }
                         ttsEnabled = false;
                     };
@@ -1546,6 +1635,10 @@
                     window.speechSynthesis.speak(utterance);
                 } catch (_) {
                     ttsEnabled = false;
+                    ttsEnded = true;
+                    if (narrationComplete) {
+                        startAutoContinue();
+                    }
                 }
             }
 
@@ -1557,7 +1650,9 @@
 
                 stopTypewriter();
                 stopNarrator();
-
+                cancelAutoContinue();
+                narrationComplete = false;
+                ttsEnded = false;
                 storyContent.textContent = '';
                 cursor.className = 'cursor';
                 narrationComplete = false;
@@ -1565,6 +1660,7 @@
 
                 drawScene(chapter.image);
 
+                // Fade in music when new chapter loads
                 if (window.__music && window.__music.fadeIn) {
                     window.__music.fadeIn();
                 }
@@ -1622,39 +1718,37 @@
                             }, 300);
                         }
 
-                        setTimeout(() => btnContinue.classList.add('visible'), 600);
+                        // If TTS already ended, start auto-continue, else wait for TTS end.
+                        if (ttsEnded) {
+                            startAutoContinue();
+                        }
                     }
                 }, 16);
             }
 
             function nextChapter() {
-                if (window.__music && window.__music.fadeIn) {
-                    window.__music.fadeIn();
+                cancelAutoContinue();
+                // if final chapter, finish
+                if (currentChapterIndex >= CHAPTERS.length - 1) {
+                    finishStory();
+                    return;
                 }
-
+                // If we have an active overlay returning, handle it
                 if (activeOverlay && overlayReturning) {
                     activeOverlay.classList.remove('returning');
                     activeOverlay.classList.add('exit');
                     activeOverlay = null;
                     overlayReturning = false;
                     setTimeout(() => {
-                        if (currentChapterIndex < CHAPTERS.length - 1) {
-                            loadChapter(currentChapterIndex + 1);
-                        } else {
-                            finishStory();
-                        }
+                        loadChapter(currentChapterIndex + 1);
                     }, 500);
                     return;
                 }
-
-                if (currentChapterIndex < CHAPTERS.length - 1) {
-                    loadChapter(currentChapterIndex + 1);
-                } else {
-                    finishStory();
-                }
+                loadChapter(currentChapterIndex + 1);
             }
 
             function finishStory() {
+                cancelAutoContinue();
                 btnContinue.classList.remove('visible');
                 btnContinue.style.pointerEvents = 'none';
                 btnContinue.style.opacity = '0.2';
@@ -1665,7 +1759,7 @@
                 storyTextElement.style.opacity = '0.3';
 
                 if (window.__music && window.__music.fadeOut) {
-                    window.__music.fadeOut();
+                    window.__music.fadeOut(8000); // slow fade on final
                 }
             }
 
@@ -1702,9 +1796,8 @@
                 }, 500);
             }, 3500);
 
-            // On Enter Story click, unmute and ensure playback
             btnEnter.addEventListener('click', () => {
-                ensureAudioPlayback(); // Unmute and play
+                ensureAudioPlayback();
 
                 opening.classList.remove('active');
                 opening.classList.add('exit');
@@ -1723,11 +1816,16 @@
                 }, 500);
             });
 
-            btnContinue.addEventListener('click', nextChapter);
+            // Manual continue (also cancels auto)
+            btnContinue.addEventListener('click', function() {
+                cancelAutoContinue();
+                nextChapter();
+            });
 
             skipBtn.addEventListener('click', function(e) {
                 e.stopPropagation();
-                if (narrationComplete) {
+                if (narrationComplete && ttsEnded) {
+                    cancelAutoContinue();
                     nextChapter();
                 }
             });
@@ -1737,8 +1835,9 @@
                     if (opening.classList.contains('active')) {
                         e.preventDefault();
                         btnEnter.click();
-                    } else if (prologue.classList.contains('active') && narrationComplete) {
+                    } else if (prologue.classList.contains('active') && narrationComplete && ttsEnded) {
                         e.preventDefault();
+                        cancelAutoContinue();
                         nextChapter();
                     }
                 }
@@ -1749,8 +1848,9 @@
                     }
                 }
                 if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-                    if (prologue.classList.contains('active') && narrationComplete) {
+                    if (prologue.classList.contains('active') && narrationComplete && ttsEnded) {
                         e.preventDefault();
+                        cancelAutoContinue();
                         nextChapter();
                     }
                 }
@@ -1768,7 +1868,8 @@
             // ======================================================================
             drawScene('mountain');
             console.log('✦ The Age of Black Fire · Cinematic Experience Loaded ✦');
-            console.log('🎵 YouTube player: autoplay forced (starts muted, unmutes on user click).');
+            console.log('🎵 Autoplay: YouTube API + fallback iframe (muted).');
+            console.log('🔊 TTS ends → music fades slowly (8s), then auto-continues after 5s.');
 
         })();
     </script>
