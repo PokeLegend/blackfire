@@ -90,10 +90,9 @@
             width: 100%;
             height: 100%;
             border: none;
-            /* allow autoplay */;
         }
 
-        /* ---------- INTRO SPLASH ---------- */
+        /* ---------- INTRO SPLASH — ZOOMED IN (cover) ---------- */
         #intro-splash {
             position: fixed;
             top: 0;
@@ -142,7 +141,7 @@
             color: var(--gold);
         }
 
-        /* ---------- CHAPTER IMAGE OVERLAYS ---------- */
+        /* ---------- CHAPTER IMAGE OVERLAYS — ZOOMED IN (cover) ---------- */
         .chapter-image-overlay {
             position: fixed;
             top: 0;
@@ -617,7 +616,7 @@
             opacity: 0.3;
         }
 
-        /* ---------- FINAL ENDING OVERLAY ---------- */
+        /* ---------- FINAL ENDING OVERLAY — ZOOMED IN (cover) ---------- */
         #final-overlay {
             position: fixed;
             top: 0;
@@ -919,9 +918,9 @@
         <div class="chapter-label">Chapter VII · The Other World</div>
     </div>
 
-    <!-- ====== FINAL ENDING OVERLAY ====== -->
+    <!-- ====== FINAL ENDING OVERLAY (new image, zoomed in) ====== -->
     <div id="final-overlay">
-        <img src="https://64.media.tumblr.com/2342cf729d2fa80a8f869e70ef8b9e3a/6c3eae6c7b210f6d-56/s1280x1920/8c72bc0da9a4f3752e4544bc3a3572ea64ff60cf.pnj" alt="The Age of Black Fire · The End" />
+        <img src="https://64.media.tumblr.com/56953dcca96adfe35a5b7e9c74946646/323a9977449aecc7-b3/s1280x1920/447a07b0fa70d15357c9569125d05fc99912e9a1.pnj" alt="The Age of Black Fire · The End" />
         <div class="final-label">✦ The End ✦</div>
         <div class="final-sub">Book One · The Descent of Fire</div>
     </div>
@@ -1051,20 +1050,22 @@
                 }, 16);
             }
 
+            // Duck to a very low volume (6%) when TTS starts
             function duckVolume() {
                 if (fadeInterval) {
                     clearInterval(fadeInterval);
                     fadeInterval = null;
                     isFading = false;
                 }
-                targetVolume = 10;
-                if (player && playerReady) setPlayerVolume(10);
-                // fallback: we can't control volume, so do nothing
+                targetVolume = 6; // even lower than half (was 10)
+                if (player && playerReady) {
+                    fadeVolume(6, 1000); // smooth 1-second fade
+                }
             }
 
-            function fadeOutMusic(duration = 2500) {
+            function fadeOutMusic(duration) {
                 if (currentVolume === 0 || !player || !playerReady) return;
-                fadeVolume(0, duration);
+                fadeVolume(0, duration || 2500);
             }
 
             function fadeInMusic() {
@@ -1101,8 +1102,7 @@
                 container.innerHTML = '';
                 container.appendChild(fallbackIframe);
                 console.log('🎵 Fallback iframe injected (muted autoplay).');
-                // indicate ready (we don't have volume control)
-                playerReady = true; // fake ready for volume indicator
+                playerReady = true;
                 document.getElementById('music-indicator').classList.add('active');
                 updateVolumeIndicator(20);
             }
@@ -1118,9 +1118,8 @@
                 document.head.appendChild(tag);
             }
 
-            // This will be called by the API if it loads
             window.onYouTubeIframeAPIReady = function() {
-                if (fallbackIframe) return; // already using fallback
+                if (fallbackIframe) return;
                 clearTimeout(apiFallbackTimer);
                 player = new YT.Player('youtube-player', {
                     height: '34',
@@ -1136,7 +1135,7 @@
                         modestbranding: 1,
                         iv_load_policy: 3,
                         disablekb: 1,
-                        mute: 1 // start muted for autoplay
+                        mute: 1
                     },
                     events: {
                         onReady: function(event) {
@@ -1146,7 +1145,6 @@
                             targetVolume = 20;
                             updateVolumeIndicator(20);
                             document.getElementById('music-indicator').classList.add('active');
-                            // add allow attribute to the iframe created by API
                             const iframe = container.querySelector('iframe');
                             if (iframe) {
                                 iframe.allow = 'autoplay; encrypted-media';
@@ -1161,7 +1159,6 @@
                         },
                         onError: function(event) {
                             console.warn('YouTube API error:', event.data);
-                            // If error, fallback to iframe
                             if (!fallbackIframe) {
                                 createFallbackIframe();
                             }
@@ -1170,7 +1167,6 @@
                 });
             };
 
-            // If API doesn't load within 3 seconds, use fallback
             function startAPITimer() {
                 apiFallbackTimer = setTimeout(() => {
                     if (!playerReady && !fallbackIframe) {
@@ -1180,20 +1176,15 @@
                 }, 3000);
             }
 
-            // Init: load API and start timer
             loadYouTubeAPI();
             startAPITimer();
 
-            // ---- Unmute on user interaction ----
             function ensureAudioPlayback() {
                 if (fallbackIframe) {
-                    // fallback iframe is already playing muted, we can't unmute it directly
                     console.log('🎵 Fallback iframe is playing muted (cannot unmute).');
                     return;
                 }
-                if (!player || !playerReady) {
-                    return;
-                }
+                if (!player || !playerReady) return;
                 try {
                     player.unMute();
                     player.setVolume(20);
@@ -1536,7 +1527,6 @@
                 }
                 narratorDot.classList.add('paused');
                 waveform.classList.add('paused');
-                // we do NOT fade out music here; we fade out slowly on TTS end
             }
 
             let narratorUtterance = null;
@@ -1555,13 +1545,10 @@
             }
 
             function startAutoContinue() {
-                // Called when both typing and TTS are done.
                 if (autoContinueTimer) clearTimeout(autoContinueTimer);
-                // Show the continue button (optional) but we will auto-continue after 5s
                 btnContinue.classList.add('visible');
                 autoContinueTimer = setTimeout(() => {
                     autoContinueTimer = null;
-                    // Only continue if we are still in the same chapter and not already continuing
                     if (narrationComplete && ttsEnded) {
                         nextChapter();
                     }
@@ -1596,24 +1583,22 @@
                     );
                     if (preferred) utterance.voice = preferred;
 
-                    ttsEnded = false; // reset
+                    ttsEnded = false;
 
                     utterance.onstart = () => {
                         narratorDot.classList.remove('paused');
                         waveform.classList.remove('paused');
                         if (window.__music && window.__music.duck) {
-                            window.__music.duck(); // volume to 10%
+                            window.__music.duck(); // fade to 6% smoothly
                         }
                     };
                     utterance.onend = () => {
                         narratorDot.classList.add('paused');
                         waveform.classList.add('paused');
                         ttsEnded = true;
-                        // Start slow fade out over 8 seconds
                         if (window.__music && window.__music.fadeOut) {
                             window.__music.fadeOut(8000);
                         }
-                        // If narration is already complete, trigger auto-continue
                         if (narrationComplete) {
                             startAutoContinue();
                         }
@@ -1621,7 +1606,7 @@
                     utterance.onerror = () => {
                         narratorDot.classList.add('paused');
                         waveform.classList.add('paused');
-                        ttsEnded = true; // treat as ended
+                        ttsEnded = true;
                         if (window.__music && window.__music.fadeOut) {
                             window.__music.fadeOut(8000);
                         }
@@ -1655,12 +1640,10 @@
                 ttsEnded = false;
                 storyContent.textContent = '';
                 cursor.className = 'cursor';
-                narrationComplete = false;
                 btnContinue.classList.remove('visible');
 
                 drawScene(chapter.image);
 
-                // Fade in music when new chapter loads
                 if (window.__music && window.__music.fadeIn) {
                     window.__music.fadeIn();
                 }
@@ -1718,7 +1701,6 @@
                             }, 300);
                         }
 
-                        // If TTS already ended, start auto-continue, else wait for TTS end.
                         if (ttsEnded) {
                             startAutoContinue();
                         }
@@ -1728,12 +1710,10 @@
 
             function nextChapter() {
                 cancelAutoContinue();
-                // if final chapter, finish
                 if (currentChapterIndex >= CHAPTERS.length - 1) {
                     finishStory();
                     return;
                 }
-                // If we have an active overlay returning, handle it
                 if (activeOverlay && overlayReturning) {
                     activeOverlay.classList.remove('returning');
                     activeOverlay.classList.add('exit');
@@ -1758,9 +1738,8 @@
                 finalOverlay.classList.add('active');
                 storyTextElement.style.opacity = '0.3';
 
-                if (window.__music && window.__music.fadeOut) {
-                    window.__music.fadeOut(8000); // slow fade on final
-                }
+                // Music keeps playing forever — no fade out
+                console.log('🎵 The End — music continues to loop.');
             }
 
             // ======================================================================
@@ -1816,7 +1795,6 @@
                 }, 500);
             });
 
-            // Manual continue (also cancels auto)
             btnContinue.addEventListener('click', function() {
                 cancelAutoContinue();
                 nextChapter();
@@ -1868,8 +1846,9 @@
             // ======================================================================
             drawScene('mountain');
             console.log('✦ The Age of Black Fire · Cinematic Experience Loaded ✦');
-            console.log('🎵 Autoplay: YouTube API + fallback iframe (muted).');
-            console.log('🔊 TTS ends → music fades slowly (8s), then auto-continues after 5s.');
+            console.log('🎵 Images: object-fit: cover (zoomed in).');
+            console.log('🔊 TTS ducking: fades to 6% (smooth 1s), then fades to 0 over 8s after TTS ends.');
+            console.log('🎵 Final screen: music loops forever.');
 
         })();
     </script>
